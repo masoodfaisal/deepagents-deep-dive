@@ -25,6 +25,22 @@ from util.stats import (
     sum_tokens,
 )
 from util.charts import show_comparison_bars
+from util.research import (
+    RESEARCH_INSTRUCTIONS,
+    build_research_agent,
+    build_research_model,
+    researcher,
+)
+from util.voice_evals import (
+    DELIVERY_CHECKS,
+    SPOKEN_CHECKS,
+    DeliveryGrade,
+    SpokenGrade,
+    build_audio_judge,
+    grade_delivery,
+    grade_report,
+    make_spoken_judge,
+)
 from util.voice import (
     MIC_RATE,
     SPEAKER_RATE,
@@ -32,6 +48,7 @@ from util.voice import (
     LatestJob,
     SpeakerOutput,
     VoiceUI,
+    resample_pcm16,
     reset_audio,
     run_until_stopped,
     start_session,
@@ -65,7 +82,20 @@ __all__ = [
     "VoiceUI",
     "reset_audio",
     "run_until_stopped",
+    "resample_pcm16",
     "start_session",
     "MIC_RATE",
     "SPEAKER_RATE",
+    "RESEARCH_INSTRUCTIONS",
+    "build_research_agent",
+    "build_research_model",
+    "researcher",
+    "DELIVERY_CHECKS",
+    "SPOKEN_CHECKS",
+    "DeliveryGrade",
+    "SpokenGrade",
+    "build_audio_judge",
+    "grade_delivery",
+    "grade_report",
+    "make_spoken_judge",
 ]

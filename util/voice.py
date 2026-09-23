@@ -18,6 +18,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Coroutine
 
 import ipywidgets as widgets
+import numpy as np
 import sounddevice as sd
 from IPython.display import display
 
@@ -151,6 +152,28 @@ class MicInput:
                 pending.clear()
 
 
+def resample_pcm16(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
+    """Resample mono PCM16 between rates by linear interpolation.
+
+    LangSmith's voice recording wants both channels at one rate, but the mic runs at
+    16 kHz and the model's audio comes back at 24 kHz, so one side has to be converted.
+    Linear interpolation is crude — no anti-aliasing filter — but this feeds a trace
+    attachment you listen back to, not the model, and Python 3.13 dropped `audioop`.
+    Each chunk is resampled independently, so chunk boundaries can click faintly.
+    """
+    if src_rate == dst_rate or not pcm:
+        return pcm
+    samples = np.frombuffer(pcm, dtype="<i2")
+    if samples.size == 0:
+        return b""
+    n_out = int(round(samples.size * dst_rate / src_rate))
+    if n_out <= 0:
+        return b""
+    grid = np.linspace(0, samples.size - 1, n_out)
+    out = np.interp(grid, np.arange(samples.size), samples.astype(np.float64))
+    return np.rint(out).astype("<i2").tobytes()
+
+
 class SpeakerOutput:
     """Play 24 kHz PCM the model streams back, with barge-in support.
 
@@ -165,6 +188,7 @@ class SpeakerOutput:
         self._lock = threading.Lock()
         self._stream: sd.RawOutputStream | None = None
         self._finished_at = float("-inf")  # when the queue last ran dry
+        self._played_cb: Callable[[bytes], None] | None = None
 
     def _on_request(self, outdata, frames, time_info, status):
         # Runs on PortAudio's thread. Fill the request from the buffer; pad with
@@ -180,6 +204,16 @@ class SpeakerOutput:
         if chunk and drained:
             # The last queued audio just went to the device: start the tail timer.
             self._finished_at = time.monotonic()
+        if chunk and self._played_cb is not None:
+            # Report only audio that reached the device, so anything flush() dropped
+            # on a barge-in never lands in the recording — the trace should hold what
+            # the user heard, not what the model generated. Runs on PortAudio's
+            # thread, so it must stay cheap, and a failing recorder must not be able
+            # to take the audio stream down with it.
+            try:
+                self._played_cb(chunk)
+            except Exception:
+                pass
 
     def __enter__(self) -> "SpeakerOutput":
         self._stream = sd.RawOutputStream(
@@ -201,6 +235,19 @@ class SpeakerOutput:
         """Queue a chunk of PCM for gapless playback."""
         with self._lock:
             self._buffer.extend(pcm)
+
+    def set_played_callback(self, callback: Callable[[bytes], None] | None) -> None:
+        """Call `callback(pcm)` for each chunk handed to the sound device.
+
+        This is the agent side of a LangSmith voice recording: pass
+        `session.record_agent_audio` from `wrap_gemini_live`.
+        """
+        self._played_cb = callback
+
+    def buffered_bytes(self) -> int:
+        """Bytes still queued for playback — 0 once the model's audio has been played."""
+        with self._lock:
+            return len(self._buffer)
 
     def flush(self) -> None:
         """Drop all queued audio (barge-in): the user interrupted the model."""
